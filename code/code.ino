@@ -5,23 +5,35 @@
 #define INR0 30 //output 1 for right motor driver
 #define INR1 32 //output 2 for right motor driver
 
-#define Kp_0  25
-#define Ki_0  0.001
-#define sampleTime  0.005
-//#define sampleTime  0.01
+#define pot A0
+
+volatile double Kp_0 = 0.1; 
+volatile double Ki_0 = 4;
+volatile double Kd_0 = 0;
+volatile double sampleTime = 0.005;
+volatile double kpPart, kiPart, kdPart;
+volatile int16_t PIDOUT;
+volatile uint8_t doubleSampleTime = 10;
 
 volatile bool bState;
 volatile double angle, angleDeg, preAngle;
 volatile double stepPerPul = 0.01026664265; // 2 * PI / number of pulses per revolution
-volatile double error_0, errorSum_0;
+volatile double curError_0, preError_0, errorSum_0;
 volatile double motorPower = 127, curSpeed;
-volatile double targetSpeed = 50; 
+volatile double targetSpeed = 30; 
 double fullRotation = 6.2831853;
 volatile unsigned long pulsesCnt, prePulsesCnt;
-volatile int n;
+volatile int8_t n;
 volatile bool motorDir;
 
-int motorPower_1 = 150;
+
+
+int16_t potRead, potShift = 0;
+double potAns;
+
+
+
+uint8_t motorPower_1 = 100;
 
 void INIT_TIMER(void)
 {
@@ -44,7 +56,7 @@ void INIT_TIMER(void)
 void setup() {
   // put your setup code here, to run once:
   attachInterrupt(digitalPinToInterrupt(channelA), POSITION_CONTROL, RISING);  
-  Serial.begin(9600);
+  Serial.begin(38400);
   pinMode(PWM, OUTPUT);
   pinMode(INR0, OUTPUT);
   pinMode(INR1, OUTPUT);
@@ -69,24 +81,64 @@ void loop()
 //  Serial.print(pulsesCnt);
 //  Serial.print('\t');
 //  Serial.println(motorPower);
+  
+//  motorPower_1 = READ_POT();
+//  Serial.print(motorPower_1);
+//  Serial.print('\t');
+//  Serial.println(error_0);
 
-  Serial.println(errorSum_0);
-//
+  
+//  Serial.println(errorSum_0);
 
-//
+//  Serial.println(curError_0 - preError_0);
 
-
-
-
+  
   digitalWrite(INR0, HIGH);
   digitalWrite(INR1, LOW);
 //  analogWrite(PWM,motorPower_1);
 //  Serial.println(curSpeed);
-  analogWrite(PWM,motorPower);
+  analogWrite(PWM,PIDOUT);
+
 //  Serial.print(curSpeed);
 //  Serial.print(" ");
-//  Serial.println(targetSpeed);  
+//  Serial.print(targetSpeed);
+//  Serial.print(" ");
+//  Serial.print(0);
+//  Serial.print(" ");
+//  Serial.print(20);
+//  Serial.print(" ");
+//  Serial.print(40);
+//  Serial.print(" ");
+//  Serial.print(60);
+//  Serial.print(" ");
+//  Serial.print(80);
+//  Serial.print(" ");
+//  Serial.println(100);
+
+  Serial.print(curError_0);
+  Serial.print('\t');
+  Serial.print(kpPart);
+  Serial.print('\t');
+  Serial.print(kiPart);
+  Serial.print('\t');
+  Serial.print(kdPart);
+  Serial.print('\t');  
+  Serial.print(PIDOUT);
+  Serial.print('\t');  
+  Serial.println(curSpeed);
+  
 }
+
+double READ_POT(void)
+{
+  potRead = analogRead(pot);
+  potRead = map(potRead, 0, 1023, 0, 255);
+  potAns = (double)potRead / 1;
+  potAns = potAns + potShift;
+  return potAns;
+}
+
+
 
 void POSITION_CONTROL()
 {
@@ -118,20 +170,29 @@ void POSITION_CONTROL()
 ISR(TIMER1_COMPA_vect)
 {
 //  digitalWrite(22, HIGH);
-  if(n > 9)
+  if(n > doubleSampleTime - 1)
   {
 //    digitalWrite(22, !digitalRead(22));
-    curSpeed = pulsesCnt / 0.05; // number of pulses per second = (pulses / sec)
+    curSpeed = (double)pulsesCnt / (sampleTime * doubleSampleTime); // number of pulses per second = (pulses / sec)
     curSpeed = curSpeed / 612; // rps = (counted pulses until now / total number of pulses per revolution)
     curSpeed = curSpeed * 60;
     pulsesCnt = 0;  
+    curError_0 = targetSpeed - curSpeed;
+    errorSum_0 = errorSum_0 + curError_0;  
+//    errorSum_0 = constrain(errorSum_0, -200, 200);
+//  calculate output from KP, KI, KD
+    kpPart = Kp_0*curError_0;
+    kiPart = Ki_0*errorSum_0*sampleTime*doubleSampleTime;
+    kdPart = (Kd_0*(curError_0 - preError_0)) / (sampleTime*doubleSampleTime);
+    motorPower = kpPart + kiPart + kdPart;
+    PIDOUT = (int16_t) motorPower;
+    if(PIDOUT > 255)
+      PIDOUT = 255;
+    else if(PIDOUT < 0)
+      PIDOUT = 0;
+    preError_0 = curError_0;
+//    motorPower = constrain(motorPower, 0, 255);
     n = 0;
-    error_0 = targetSpeed - curSpeed;
-    errorSum_0 = errorSum_0 + error_0;  
-//  errorSum_0 = constrain(errorSum_0, -100, 100);
-  //calculate output from KP, KI
-    motorPower = Kp_0*(error_0) + Ki_0*(errorSum_0)*sampleTime*10;
-    motorPower = constrain(motorPower, 0, 255);
   }
   n++;
 //  if(motorPower < 0)
