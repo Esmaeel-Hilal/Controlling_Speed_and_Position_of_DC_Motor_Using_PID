@@ -33,7 +33,7 @@ double fullRotation = 6.2831853;
 volatile unsigned long pulsesCnt, prePulsesCnt;
 volatile int8_t n;
 volatile bool motorDir;
-
+volatile uint16_t pulsesPerRev = 612;
 
 
 int16_t potRead, potShift = 0;
@@ -174,8 +174,8 @@ void POSITION_CONTROL()
 
 ISR(TIMER1_COMPA_vect)
 {
-    curSpeed = (double)pulsesCnt / sampleTime;
-    curSpeed = curSpeed / 612; // rps = (counted pulses until now / total number of pulses per revolution)
+    curSpeed = (double)pulsesCnt * (1 / sampleTime); //number of pulses per second.
+    curSpeed = curSpeed / pulsesPerRev; // rps = (counted pulses until now / total number of pulses per revolution)
     curSpeed = curSpeed * 60;
     pulsesCnt = 0;  
     curError_0 = targetSpeed - curSpeed;
