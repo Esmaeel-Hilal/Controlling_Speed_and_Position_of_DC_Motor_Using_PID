@@ -174,7 +174,7 @@ void POSITION_CONTROL()
 
 ISR(TIMER1_COMPA_vect)
 {
-    curSpeed = (double)pulsesCnt * (1 / sampleTime); //number of pulses per second.
+    curSpeed = (double)pulsesCnt * (1 / sampleTime); //number of pulses per second
     curSpeed = curSpeed / pulsesPerRev; // rps = (counted pulses until now / total number of pulses per revolution)
     curSpeed = curSpeed * 60;
     pulsesCnt = 0;  
