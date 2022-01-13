@@ -1,63 +1,59 @@
-#define channelA 2
-#define channelB 24 
+/*
+ * This code is for controlling a DC motor with 95 rpm speed 
+ * and an incoder with 612 pulse for a full rotation
+ * 
+ * Note:
+ * I found that the maximum speed of the motor is 75 rpm although it is supposed to be 95 rpm!!!
+*/
 
-#define PWM 3 //pwm for the left motor
-#define INR0 30 //output 1 for right motor driver
-#define INR1 32 //output 2 for right motor driver
 
-#define pot A0
+#define channelA 2 //pin 1 of motor incoder
+#define channelB 24 //pin 2 of motor incoder
 
-volatile double Kp_0 = 2; 
-volatile double Ki_0 = 6;
+#define PWM 3 //PWM pin of the motor
+#define INR0 30 //IN1 pin of the motor driver L298
+#define INR1 32 //IN2 pin of the motor driver L298
+
+#define pot A0 //Analog pin for tunning the gains
+
+//PID gains
+volatile double Kp_0 = 2;
+volatile double Ki_0 = 6; 
 volatile double Kd_0 = 0;
 
-volatile double Kp_1 = 0; 
-volatile double Ki_1 = 0;
-volatile double Kd_1 = 0;
-
-volatile double sampleTime = 0.1;
-volatile double kpPart_0, kiPart_0, kdPart_0;
-volatile double kpPart_1, kiPart_1, kdPart_1;
-volatile int16_t PIDOUT;
-//volatile uint8_t doubleSampleTime = 20;
-
-volatile bool bState;
-volatile double angle, angleDeg, preAngle;
-volatile double stepPerPul = 0.01026664265; // 2 * PI / number of pulses per revolution
+//variables for the PID controller
+volatile double sampleTime = 0.1; //sample time for PID controller = 100 ms
+volatile double kpPart_0, kiPart_0, kdPart_0; 
 volatile double curError_0, preError_0, errorSum_0;
-volatile double curError_1, preError_1, errorSum_1;
-volatile double motorPower = 127, curSpeed;
+volatile int16_t PIDOUT, motorPower = 127;
+
+//variables to calculate the motor speed and angle of rotation
+volatile double targetSpeed = 50; //set the target speed
+volatile bool bState; //to check the direction of the motor rotation
+volatile double angleDeg;
+const double stepPerPul = 0.0103; // 2 * PI / number of pulses per revolution = 2 * PI / 612 = 0.01026664265
+volatile double  curSpeed = 0;
 volatile double curPos = 0;
-volatile double targetSpeed = 30; 
-double fullRotation = 6.2831853;
-volatile unsigned long pulsesCnt, prePulsesCnt;
-volatile int8_t n;
-volatile bool motorDir;
-volatile uint16_t pulsesPerRev = 612;
+volatile unsigned long pulsesCnt = 0;
+volatile bool motorDir = 1;
+const uint16_t pulsesPerRot = 612; //number of incoder pulses for a full rotation
 
-
+//variables for reading the pot value
 int16_t potRead, potShift = 0;
 double potAns;
 
-
-
-uint8_t motorPower_1 = 255;
-
+//Initialize timer 1
 void INIT_TIMER(void)
 {
   cli();          // disable global interrupts
   TCCR1A = 0;     // set entire TCCR1A register to 0
   TCCR1B = 0;     // same for TCCR1B    
-  // set compare match register to set sample time 5ms
-  OCR1A = 24999;
-//  OCR1A = 9999;    
-//  OCR1A = 19999;    
+  // set compare match register to set sample time 100 ms
+  OCR1A = 24999;    
   // turn on CTC mode
   TCCR1B |= (1 << WGM12);
-  // Set CS11 bit for prescaling by 64
+  // Set CS11 and CS10 bits for prescaling by 64
   TCCR1B |= (1 << CS11) | (1 << CS10); 
-// Set CS11 bit for prescaling by 8
-//    TCCR1B |= (1 << CS11);
   // enable timer compare interrupt
   TIMSK1 |= (1 << OCIE1A);
   sei();          // enable global interrupts
@@ -65,79 +61,62 @@ void INIT_TIMER(void)
 
 
 void setup() {
-  // put your setup code here, to run once:
+  //Initialize external interrupt for the incoder pin
   attachInterrupt(digitalPinToInterrupt(channelA), POSITION_CONTROL, RISING);  
+
+  //Initialize serial moniter and output pins
   Serial.begin(38400);
   pinMode(PWM, OUTPUT);
   pinMode(INR0, OUTPUT);
   pinMode(INR1, OUTPUT);
   pinMode(22, OUTPUT);
   digitalWrite(22, LOW);
-  
-  
 
+  //Call the timer initialization code
   INIT_TIMER();
 }
 
 void loop() 
 {
-  // put your main code here, to run repeatedly:
-  angleDeg = (angle * 360) / (2 * PI);
-//  Serial.print(motorDir);
-//  Serial.print('\t');
-//  Serial.print(angleDeg);
-//  Serial.print('\t');
-//  Serial.print(curSpeed);
-//  Serial.print('\t');
-//  Serial.print(pulsesCnt);
-//  Serial.print('\t');
-//  Serial.println(motorPower);
-  
-//  motorPower_1 = READ_POT();
-//  Serial.print(motorPower_1);
-//  Serial.print('\t');
-//  Serial.println(error_0);
+  //calculate the angle of rotation in degrees
+  angleDeg = (curPos * 180) / PI;
 
   
-//  Serial.println(errorSum_0);
-
-//  Serial.println(curError_0 - preError_0);
-
   
-  digitalWrite(INR0, HIGH);
-  digitalWrite(INR1, LOW);
-//  analogWrite(PWM,motorPower_1);
-//  Serial.println(curSpeed);
-  analogWrite(PWM,PIDOUT);
+  //Print the current speed and target speed in the arduino plotter to see the 
+    PLOTTER_SHOW();
+
+  //You can comment the PLOTTER_SHOW function to see the SERIAL_MONITER_SHOW function output
   
+  //Print the current error and PID controller parts, output, and the current motor speed
+//  SERIAL_MONITER_SHOW();
+
+}
+
+void PLOTTER_SHOW(void)
+{
   Serial.print(curSpeed);
   Serial.print(" ");
   Serial.print(targetSpeed);
   Serial.print(" ");
   Serial.print(0);
   Serial.print(" ");
-//  Serial.print(20);
-//  Serial.print(" ");
-//  Serial.print(40);
-//  Serial.print(" ");
-//  Serial.print(60);
-//  Serial.print(" ");
-//  Serial.print(80);
-//  Serial.print(" ");
   Serial.println(100);
+}
 
-//  Serial.print(curError_0);
-//  Serial.print('\t');
-//  Serial.print(kpPart);
-//  Serial.print('\t');
-//  Serial.print(kiPart);
-//  Serial.print('\t');
-//  Serial.print(kdPart);
-//  Serial.print('\t');  
-//  Serial.print(PIDOUT);
-//  Serial.print('\t');  
-//  Serial.println(curSpeed);
-
+void SERIAL_MONITER_SHOW(void)
+{
+  Serial.print(curError_0);
+  Serial.print('\t');
+  Serial.print(kpPart_0);
+  Serial.print('\t');
+  Serial.print(kiPart_0);
+  Serial.print('\t');
+  Serial.print(kdPart_0);
+  Serial.print('\t');  
+  Serial.print(PIDOUT);
+  Serial.print('\t');  
+  Serial.println(curSpeed);
 }
 
 double READ_POT(void)
@@ -149,47 +128,73 @@ double READ_POT(void)
   return potAns;
 }
 
-
-
 void POSITION_CONTROL()
 {
-//  interrEnter = HIGH;
+  //read the other incoder pin to know the direction of rotation
+  //bState = HIGH => clockwise rotation
+  //bState = LOW => counter-clockwise rotation
   bState = digitalRead(channelB);
   pulsesCnt++;
-  if(bState == LOW)
+  if(bState == HIGH)
   {
-    angle = angle + stepPerPul;
+    curPos = curPos + stepPerPul;
   }
   else
   {
-    angle = angle - stepPerPul;
+    curPos = curPos - stepPerPul;
   }
-  if(angle > 2 * PI)
-    angle = 0;
-  else if(angle < (-2 * PI))
-  {
-    angle = 0;
-  }
+
+  //set current angle to zero when finishing a full rotation
+//  if(curPos > 2 * PI)
+//    curPos = 0;
+//  else if(curPos < (-2 * PI))
+//    curPos = 0;
 }
+
 
 ISR(TIMER1_COMPA_vect)
 {
+//  Calculate the speed of the motor  
     curSpeed = (double)pulsesCnt * (1 / sampleTime); //number of pulses per second
-    curSpeed = curSpeed / pulsesPerRev; // rps = (counted pulses until now / total number of pulses per revolution)
+    curSpeed = curSpeed / pulsesPerRot; // rps = (counted pulses until now / total number of pulses per revolution)
     curSpeed = curSpeed * 60;
-    pulsesCnt = 0;  
+    pulsesCnt = 0;
+
+//  Calculate the error in speed  
     curError_0 = targetSpeed - curSpeed;
+
+//  Calculate the error sum
     errorSum_0 = errorSum_0 + curError_0;  
-//    errorSum_0 = constrain(errorSum_0, -200, 200);
-//  calculate output from KP, KI, KD
+
+//  Calculate KP_part, KI_part, KD_part
     kpPart_0 = Kp_0*curError_0;
     kiPart_0 = Ki_0*errorSum_0*sampleTime;
     kdPart_0 = (Kd_0*(curError_0 - preError_0)) / sampleTime;
+
+//  Calculate the PID output 
     motorPower = kpPart_0 + kiPart_0 + kdPart_0;
+
+//  Save the previous value of the error
     preError_0 = curError_0;
+
     PIDOUT = (int16_t) motorPower;
+
+//  Determine the max limits and min limits of the PID controller output
     if(PIDOUT > 255)
       PIDOUT = 255;
     else if(PIDOUT < 0)
       PIDOUT = 0;
+
+//  
+    if(motorDir)
+    {
+      digitalWrite(INR0, HIGH);
+      digitalWrite(INR1, LOW);
+    }
+    else
+    {
+      digitalWrite(INR0, LOW);
+      digitalWrite(INR1, HIGH);
+    }
+    analogWrite(PWM,PIDOUT);
 }
