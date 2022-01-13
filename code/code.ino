@@ -1,10 +1,11 @@
 /*
- * This code is for controlling a DC motor with 95 rpm speed 
+ * This code is for controlling the speed and angle of rotation a DC motor with 95 rpm speed using Arduino Mega and PID controller
  * and an incoder with 612 pulse for a full rotation
  * 
  * Note:
  * I found that the maximum speed of the motor is 75 rpm although it is supposed to be 95 rpm!!!
 */
+
 
 
 #define channelA 2 //pin 1 of motor incoder
@@ -16,27 +17,44 @@
 
 #define pot A0 //Analog pin for tunning the gains
 
-//PID gains
+//PID gains for speed control
 volatile double Kp_0 = 2;
 volatile double Ki_0 = 6; 
 volatile double Kd_0 = 0;
 
-//variables for the PID controller
-volatile double sampleTime = 0.1; //sample time for PID controller = 100 ms
-volatile double kpPart_0, kiPart_0, kdPart_0; 
+//PID gains for angle control
+volatile double Kp_1 = 15; 
+volatile double Ki_1 = 2; 
+volatile double Kd_1 = 0.001;
+
+//variables for the PID controllers
+volatile double sampleTime = 0.1;
+volatile double kpPart_0, kiPart_0, kdPart_0;
+volatile double kpPart_1, kiPart_1, kdPart_1;
 volatile double curError_0, preError_0, errorSum_0;
+volatile double curError_1, preError_1, errorSum_1;
 volatile int16_t PIDOUT, motorPower = 127;
+const double maxISpeed = 84; //upper limit of the PID integrator for speed control
+const double maxIAngle = 21; //upper limit of the PID integrator for angle control
+
+
 
 //variables to calculate the motor speed and angle of rotation
-volatile double targetSpeed = 50; //set the target speed
+const double targetPos = 3.14 * 2; //Set the target angle in radians
+const double targetPosDed = (targetPos * 180) / PI;
+const double stepPerPul = 0.0103; // 2 * PI / number of pulses per revolution = 2 * PI / 612 = 0.01026664265
+volatile double targetSpeed = 30; //This value will be set by the angle controller now
 volatile bool bState; //to check the direction of the motor rotation
 volatile double angleDeg;
-const double stepPerPul = 0.0103; // 2 * PI / number of pulses per revolution = 2 * PI / 612 = 0.01026664265
-volatile double  curSpeed = 0;
+volatile double curSpeed = 0;
 volatile double curPos = 0;
 volatile unsigned long pulsesCnt = 0;
-volatile bool motorDir = 1;
-const uint16_t pulsesPerRot = 612; //number of incoder pulses for a full rotation
+volatile int8_t motorDir;
+const uint16_t pulsesPerRev = 612; //number of incoder pulses for a full rotation
+const double desiredNumofRev = targetPos / 3.14; //get the number of full rotations
+const double errorPerRot = 0.0698; //error in radian for a full rotation, 8 degrees for every 360 degree, hence the error is (+ or - 1%)
+const double allowedErrAngle = desiredNumofRev * errorPerRot; //the allowed error
+volatile bool reachedDes = false;
 
 //variables for reading the pot value
 int16_t potRead, potShift = 0;
@@ -62,7 +80,7 @@ void INIT_TIMER(void)
 
 void setup() {
   //Initialize external interrupt for the incoder pin
-  attachInterrupt(digitalPinToInterrupt(channelA), POSITION_CONTROL, RISING);  
+  attachInterrupt(digitalPinToInterrupt(channelA), POSITION_CONTROL, RISING);
 
   //Initialize serial moniter and output pins
   Serial.begin(38400);
@@ -74,49 +92,84 @@ void setup() {
 
   //Call the timer initialization code
   INIT_TIMER();
+
+//  if(desiredNumofRev < 1)
+//    desiredNumofRev = 1;
 }
 
 void loop() 
 {
   //calculate the angle of rotation in degrees
   angleDeg = (curPos * 180) / PI;
-
-  
   
   //Print the current speed and target speed in the arduino plotter to see the 
-    PLOTTER_SHOW();
+  PLOTTER_SHOW();
 
   //You can comment the PLOTTER_SHOW function to see the SERIAL_MONITER_SHOW function output
   
   //Print the current error and PID controller parts, output, and the current motor speed
 //  SERIAL_MONITER_SHOW();
-
 }
 
 void PLOTTER_SHOW(void)
 {
-  Serial.print(curSpeed);
+  Serial.print(targetPosDed);
   Serial.print(" ");
-  Serial.print(targetSpeed);
+  Serial.print(angleDeg);
   Serial.print(" ");
   Serial.print(0);
   Serial.print(" ");
-  Serial.println(100);
+  Serial.print(90);
+  Serial.print(" ");
+  Serial.print(180);
+  Serial.print(" ");
+  Serial.print(270);
+  Serial.print(" ");
+  Serial.println(360);
 }
 
 void SERIAL_MONITER_SHOW(void)
 {
-  Serial.print(curError_0);
-  Serial.print('\t');
-  Serial.print(kpPart_0);
-  Serial.print('\t');
-  Serial.print(kiPart_0);
-  Serial.print('\t');
-  Serial.print(kdPart_0);
-  Serial.print('\t');  
-  Serial.print(PIDOUT);
-  Serial.print('\t');  
-  Serial.println(curSpeed);
+  if(reachedDes)
+  {
+    Serial.print("Destination Reached!!!!!!");
+    Serial.print('\t');
+    Serial.print("targetPos = ");
+    Serial.print(targetPos);
+    Serial.print('\t');
+    Serial.print("curPos = ");
+    Serial.println(curPos);
+  }
+  else
+  { 
+    Serial.print(curError_1);
+    Serial.print('\t');
+    Serial.print(kpPart_1);
+    Serial.print('\t');
+    Serial.print(kiPart_1);
+    Serial.print('\t');
+    Serial.print(kdPart_1);
+    Serial.print('\t');  
+    Serial.print(targetSpeed);
+    Serial.print('\t');  
+    Serial.print(curPos);
+  
+    Serial.print('\t');  
+    Serial.print("||");
+    Serial.print('\t');  
+  
+    Serial.print(curError_0);
+    Serial.print('\t');
+    Serial.print(kpPart_0);
+    Serial.print('\t');
+    Serial.print(kiPart_0);
+    Serial.print('\t');
+    Serial.print(kdPart_0);
+    Serial.print('\t');  
+    Serial.print(PIDOUT);
+    Serial.print('\t');  
+    Serial.println(curSpeed);
+  }
 }
 
 double READ_POT(void)
@@ -127,6 +180,8 @@ double READ_POT(void)
   potAns = potAns + potShift;
   return potAns;
 }
+
+
 
 void POSITION_CONTROL()
 {
@@ -151,50 +206,115 @@ void POSITION_CONTROL()
 //    curPos = 0;
 }
 
+double myAbs(double A)
+{
+  if(A < 0)
+    return -A;
+  else
+    return A;
+}
 
 ISR(TIMER1_COMPA_vect)
 {
-//  Calculate the speed of the motor  
-    curSpeed = (double)pulsesCnt * (1 / sampleTime); //number of pulses per second
-    curSpeed = curSpeed / pulsesPerRot; // rps = (counted pulses until now / total number of pulses per revolution)
-    curSpeed = curSpeed * 60;
-    pulsesCnt = 0;
+  //Calculate the angle error
+  curError_1 = targetPos - curPos;
 
-//  Calculate the error in speed  
+  //Turn on the PID controller if the error is greater than the allowed error value
+  if(myAbs(curError_1) > allowedErrAngle)
+  {  
+//  Calculate the speed error
+    errorSum_1 = errorSum_1 + curError_1;
+//  Limit the error sum value
+    if(errorSum_1 > maxIAngle)
+      errorSum_1 = maxIAngle;
+//  Calculate KP_part, KI_part, KD_part
+    kpPart_1 = Kp_1*curError_1;
+    kiPart_1 = Ki_1*errorSum_1*sampleTime;
+    kdPart_1 = (Kd_1*(curError_1 - preError_1)) / sampleTime;
+    targetSpeed = kpPart_1 + kiPart_1 + kdPart_1;
+    preError_1 = curError_1;
+    reachedDes = false;
+  }
+  else
+  {
+    targetSpeed = 0;
+    reachedDes = true;   
+  }
+
+//Set the direction of the motor
+  if(targetSpeed < 0)
+  {
+    motorDir = 0;
+    targetSpeed = -targetSpeed;
+  }
+  else if(targetSpeed > 0)
+  {
+    motorDir = 1;
+  }
+  else
+  {
+     motorDir = 2;
+  }
+
+//Calculate the speed of the motor  
+  curSpeed = (double)pulsesCnt * (1 / sampleTime); //number of pulses per second.
+  curSpeed = curSpeed / pulsesPerRev; // rps = (counted pulses until now / total number of pulses per revolution)
+  curSpeed = curSpeed * 60;
+  pulsesCnt = 0; 
+    
+  if(targetSpeed == 0)
+  {
+    errorSum_0 = 0;
+    errorSum_1 = 0;
+    PIDOUT = 0;
+  }
+  else
+  { 
+//  Calculate the speed error
     curError_0 = targetSpeed - curSpeed;
 
 //  Calculate the error sum
-    errorSum_0 = errorSum_0 + curError_0;  
+    errorSum_0 = errorSum_0 + curError_0;
+
+//  Limit the error sum value
+    if(errorSum_0 > maxISpeed)
+      errorSum_0 = maxISpeed;
 
 //  Calculate KP_part, KI_part, KD_part
     kpPart_0 = Kp_0*curError_0;
     kiPart_0 = Ki_0*errorSum_0*sampleTime;
     kdPart_0 = (Kd_0*(curError_0 - preError_0)) / sampleTime;
 
-//  Calculate the PID output 
+//  Calculate the PID output     
     motorPower = kpPart_0 + kiPart_0 + kdPart_0;
 
 //  Save the previous value of the error
     preError_0 = curError_0;
+    
+    PIDOUT = (int16_t) motorPower;  
+  }
 
-    PIDOUT = (int16_t) motorPower;
+//Determine the max limits and min limits of the PID controller output  
+  if(PIDOUT > 255)
+    PIDOUT = 255;
+  else if(PIDOUT < 0)
+    PIDOUT = 0;
 
-//  Determine the max limits and min limits of the PID controller output
-    if(PIDOUT > 255)
-      PIDOUT = 255;
-    else if(PIDOUT < 0)
-      PIDOUT = 0;
-
-//  
-    if(motorDir)
-    {
-      digitalWrite(INR0, HIGH);
-      digitalWrite(INR1, LOW);
-    }
-    else
-    {
-      digitalWrite(INR0, LOW);
-      digitalWrite(INR1, HIGH);
-    }
-    analogWrite(PWM,PIDOUT);
+//Set the motor direction
+  if(motorDir == 1)
+  {
+    digitalWrite(INR0, HIGH);
+    digitalWrite(INR1, LOW);  
+  }
+  else if(motorDir == 0)
+  {
+    digitalWrite(INR0, LOW);
+    digitalWrite(INR1, HIGH);  
+  }
+  else
+  {
+    digitalWrite(INR0, HIGH);
+    digitalWrite(INR1, HIGH);  
+  }
+  analogWrite(PWM,PIDOUT);
 }
